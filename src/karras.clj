@@ -21,7 +21,8 @@
 ;; THE SOFTWARE.
 
 (ns karras
-  (:use [clojure.contrib.def :only [defnk]])
+  (:use [clojure.contrib.def :only [defnk]]
+        [clojure.contrib.ns-utils :only [immigrate]])
   (:import [com.mongodb Mongo DB DBCollection BasicDBObject
             DBObject DBCursor DBAddress MongoOptions
             ObjectId]))
@@ -60,7 +61,7 @@
  (to-clj [v] v)
 
  nil
- (to-dbo [v] v)
+ (to-dbo [v] (BasicDBObject.))
  (to-clj [v] v))
 
 (defn connect
@@ -73,6 +74,25 @@
 (defn mongo-db
   [#^Mongo connection db-name]
   (.getDB connection (keyword-str db-name)))
+
+(defmacro in-request [#^DB db & body]
+  `(try
+    (.requestStart ~db)
+    ~@body
+    (finally
+     (.requestDone ~db))))
+
+(defn write-concern-none [#^DB db]
+  (.setWriteConcern db com.mongodb.DB$WriteConcern/NONE))
+
+(defn write-concern-normal [#^DB db]
+  (.setWriteConcern db com.mongodb.DB$WriteConcern/NORMAL))
+
+(defn write-concern-strict [#^DB db]
+  (.setWriteConcern db com.mongodb.DB$WriteConcern/STRICT))
+
+(defn collection-db [#^DBCollection collection]
+  (.getDB collection))
 
 (defn drop-db [#^DBObject db]
   (.dropDatabase db))
@@ -171,26 +191,24 @@
 (defnk fetch-all
   "Fetch all the documents of a collection. Same options as fetch."
   [collection :limit nil :skip nil :include nil :exclude nil :sort nil :count false]
-  (fetch collection
-         nil
-         include
-         exclude
-         limit
-         skip
-         sort
-         count))
+  (fetch collection nil
+         :include include
+         :exclude exclude
+         :limit   limit  
+         :skip    skip   
+         :sort    sort   
+         :count   count))
 
 (defnk fetch-one
   "Fetch one document of a collection. Supports same options as fetch except :limit and :count"
   [collection query :skip nil :include nil :exclude nil :sort nil]
-  (first (fetch collection
-                query
-                include
-                exclude
-                1
-                skip
-                sort
-                false)))
+  (first (fetch collection query
+                :include include
+                :exclude exclude
+                :limit   1
+                :skip    skip
+                :sort    sort
+                :count   false)))
 
 (defn count-docs
   "Returns the count of documents, optionally, matching a query"
@@ -207,7 +225,7 @@
 (defn distinct-values
   "Fetch a seq of the distinct values of a given collection for a key."
   [#^DBCollection collection kw]
-  (seq (.distinct collection (name kw))))
+  (set (.distinct collection (name kw))))
 
 (defn group
   "Fetch a seq of grouped items.
@@ -219,30 +237,41 @@
                       {:csum 0}
                       \"function(obj,prev) { prev.csum += obj.c; }\")
 "
-  [#^DBCollection collection keys cond initial reduce]
-  (map to-clj (.group collection
-                              (to-dbo (zipmap (map name keys)
-                                                 (repeat true)))
-                              (to-dbo cond)
-                              (to-dbo initial)
-                              #^String reduce)))
+  ([#^DBCollection collection keys cond initial reduce]
+     (map to-clj (.group collection
+                         (to-dbo (zipmap (map name keys)
+                                         (repeat true)))
+                          (to-dbo cond)
+                          (to-dbo initial)
+                          #^String reduce)))
+  ([#^DBCollection collection keys]
+     (group collection keys nil {:values []} "function(obj,prev) {prev.values.push(obj)}")))
 
 (defn delete
   "Remove a document from a collection."
-  [#^DBCollection collection obj]
-  (.remove collection (to-dbo obj)))
+  [#^DBCollection collection & objs]
+  (doseq [o objs]
+    (.remove collection (to-dbo o))))
 
 (defn ensure-index
-  "Ensure an index exist on a collection
-   Options:
-     :force, force index creation, even if one exists
-     :unique, require unique values for a field"
-  [#^DBCollection collection fields & options]
-  (let [o? #(has-option? options %)]
-    (.ensureIndex collection #^DBObject
-                  (to-dbo fields)
-                  (boolean (o? :force))
-                  (boolean (o? :unique)))))
+  "Ensure an index exist on a collection"
+  [#^DBCollection collection fields]
+  (.ensureIndex collection (to-dbo fields)))
+
+(defn ensure-unique-index
+  "Ensure a unique index exist on a collection"
+  [#^DBCollection collection #^String name fields]
+  (.ensureIndex collection
+                #^DBObject (to-dbo fields)
+                name
+                true))
+
+(defn ensure-named-index
+  "Ensure a unique index exist on a collection"
+  [#^DBCollection collection #^String name fields]
+  (.ensureIndex collection
+                #^DBObject (to-dbo fields)
+                name))
 
 (defn drop-index
   [#^DBCollection collection o]
@@ -257,3 +286,6 @@
 
 (defn eval-code [db code-str]
   (to-clj (.eval db code-str (into-array nil))))
+
+
+(immigrate 'karras.sugar)
