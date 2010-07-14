@@ -235,7 +235,7 @@ Example:
   ([entity]
      (fetch-by-id (class entity) (:_id entity)))
   ([type id]
-      (c/fetch-by-id (collection-for type) id)))
+      (make type (c/fetch-by-id (collection-for type) id))))
 
 (defn count-instances
   "Return the number of entities optionally matching a given where clause."

@@ -151,6 +151,10 @@
               => person)
       (expect (fetch-one Person (where (eq :first-name "not-present")))
                => nil))
+    (testing "fetch-by-id"
+      (let [fetched-person (fetch-by-id Person (:_id person))]
+        (expect fetched-person => person)
+        (expect (class fetched-person) => Person)))
     (testing "fetch-all"
       (expect (first (fetch-all Person))
               => person))
