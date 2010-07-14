@@ -148,7 +148,9 @@
       (expect (count-instances Person) => 1))
     (testing "fetch-one"
       (expect (fetch-one Person (where (eq :_id (:_id person))))
-              => person))
+              => person)
+      (expect (fetch-one Person (where (eq :first-name "not-present")))
+               => nil))
     (testing "fetch-all"
       (expect (first (fetch-all Person))
               => person))

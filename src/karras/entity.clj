@@ -227,7 +227,8 @@ Example:
 (defn fetch-one
   "Fetch the first entity for the given type matching the supplied criteria and options."
   [type criteria & options]
-  (make type (apply c/fetch-one (collection-for type) criteria options)))
+  (when-let [document (apply c/fetch-one (collection-for type) criteria options)]
+    (make type document)))
 
 (defn fetch-by-id
   "Fetch an enity by :_id"
