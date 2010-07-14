@@ -154,7 +154,9 @@
     (testing "fetch-by-id"
       (let [fetched-person (fetch-by-id Person (:_id person))]
         (expect fetched-person => person)
-        (expect (class fetched-person) => Person)))
+        (expect (class fetched-person) => Person))
+      (expect (fetch-by-id Person "deadbeef0000000000000000")
+               => nil))
     (testing "fetch-all"
       (expect (first (fetch-all Person))
               => person))
