@@ -1,4 +1,4 @@
-(defproject karras "0.9.0"
+(defproject karras "0.9.0-LT"
   :description "A clojure entity framework for MongoDB"
   :dependencies [[org.clojure/clojure "[1.2.1],[1.3.0]"]
                  [org.mongodb/mongo-java-driver "2.7.2"]
