@@ -1,17 +1,17 @@
 ;; The MIT License
-;;
+;;  
 ;; Copyright (c) 2010 Wilkes Joiner
-;;
+;;  
 ;; Permission is hereby granted, free of charge, to any person obtaining a copy
 ;; of this software and associated documentation files (the "Software"), to deal
 ;; in the Software without restriction, including without limitation the rights
 ;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 ;; copies of the Software, and to permit persons to whom the Software is
 ;; furnished to do so, subject to the following conditions:
-;;
+;;  
 ;; The above copyright notice and this permission notice shall be included in
 ;; all copies or substantial portions of the Software.
-;;
+;;  
 ;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 ;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 ;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -21,7 +21,9 @@
 ;; THE SOFTWARE.
 
 (ns karras.core
-  (:import [com.mongodb Mongo DB BasicDBObject BasicDBObjectBuilder]
+  (:use [clojure.contrib.def :only [defnk defvar]]
+        [clojure.contrib.ns-utils :only [immigrate]])
+  (:import [com.mongodb Mongo DB BasicDBObject]
            [java.util Map Map$Entry List]))
 
 (defn- keyword-str [kw]
@@ -61,11 +63,6 @@
  (to-clj [v] (map to-clj v))
  (to-description [v] (vec (set (map to-description v))))
 
- clojure.lang.LazySeq
- (to-dbo [v] (to-dbo (vec v)))
- (to-clj [v] (to-clj (vec v)))
- (to-description [v] (to-description (vec v)))
-
  clojure.lang.Keyword
  (to-dbo [v] (str v))
  (to-clj [v] (str v))
@@ -75,7 +72,7 @@
  (to-dbo [v] (str v))
  (to-clj [v] (str v))
  (to-description [v] java.lang.String)
-
+ 
  Object
  (to-dbo [v] v)
  (to-clj [v] v)
@@ -86,9 +83,8 @@
  (to-clj [v] v)
  (to-description [v] v))
 
-(def ^{:dynamic true
-       :doc "Var to bind a com.mongo.DB. Use with with-mongo or with-mongo-request."}
-  *mongo-db* nil)
+(defvar *mongo-db* nil
+  "Var to bind a com.mongo.DB. Use with with-mongo or with-mongo-request.")
 
 (defmacro with-mongo
   "Macro to bind *mongo-db*"
@@ -129,53 +125,22 @@
      (.requestDone ~db))))
 
 (defn write-concern-none
-  "From the mongo driver javadocs:
-   No exceptions are raised, even for network issues"
+  "From the mongo driver javadocs: 
+   Don't check for or report any errors on writes."
   [#^DB db]
-  (.setWriteConcern db com.mongodb.WriteConcern/NONE))
+  (.setWriteConcern db com.mongodb.DB.WriteConcern/NONE))
 
 (defn write-concern-normal
   "From the mongo driver javadocs:
-   Exceptions are raised for network issues, but not server errors"
+   Use the default level of error checking on writes."
   [#^DB db]
-  (.setWriteConcern db com.mongodb.WriteConcern/NORMAL))
-
-(defn write-concern-safe
-  "From the mongo driver javadocs:
-   Exceptions are raised for network issues, and server errors;
-   waits on a server for the write operation"
-  [#^DB db]
-  (.setWriteConcern db com.mongodb.WriteConcern/SAFE))
+  (.setWriteConcern db com.mongodb.DB.WriteConcern/NORMAL))
 
 (defn write-concern-strict
-  "for backwards compatability, uses write-concern-safe"
+  "From the mongo driver javadocs:
+   Send a getLastError command following all writes."
   [#^DB db]
-  (write-concern-safe db))
-
-(defn write-concern-fsync-safe
-  "Exceptions are raised for network issues, and server errors;
-   the write operation waits for the server to flush the data to disk"
-  [#^DB db]
-  (.setWriteConcern db com.mongodb.WriteConcern/FSYNC_SAFE))
-
-(defn write-concern-journal-safe
-  "Exceptions are raised for network issues, and server errors;
-   the write operation waits for the server to group commit to
-   the journal file on disk"
-  [#^DB db]
-  (.setWriteConcern db com.mongodb.WriteConcern/JOURNAL_SAFE))
-
-(defn write-concern-majority
-  "Exceptions are raised for network issues, and server errors;
-   waits on a majority of servers for the write operation"
-  [#^DB db]
-  (.setWriteConcern db com.mongodb.WriteConcern/MAJORITY))
-
-(defn write-concern-replicas-safe
-  " Exceptions are raised for network issues, and server errors;
-    waits for at least 2 servers for the write operation"
-  [#^DB db]
-  (.setWriteConcern db com.mongodb.WriteConcern/REPLICAS_SAFE))
+  (.setWriteConcern db com.mongodb.DB.WriteConcern/STRICT))
 
 (defn drop-db
   ""
@@ -190,19 +155,3 @@
 (defn eval-code
   [#^DB db code-str]
   (to-clj (.eval db code-str (into-array nil))))
-
-(defn build-dbo
-  "Build a DBObject where the key-values order is preserved.
-   Useful for command objects."
-  [& kvs]
-  (let [pairs (partition 2 kvs)
-        builder (BasicDBObjectBuilder/start)]
-    (doseq [[k v] pairs]
-      (.add builder (name k) (to-dbo v)))
-    (.get builder)))
-
-(defn get-last-error
-  ([#^DB db]
-     (to-clj (.getLastError db)))
-  ([#^DB db w wtimeout fsync]
-     (to-clj (.getLastError db w wtimeout fsync))))

@@ -1,17 +1,16 @@
 (ns
     #^{:author "Wilkes Joiner"
        :doc "
-A library for defining entities and aggregates.  Entities correspond to a mongo entity.
-Aggregates correspond to a an embedded entity.
+A library for defining entities and embedded types.  Entities correspond to a mongo collection.
 
 Example:
 
-  (defaggregate Address [:street :city :state :zip])
+  (defembedded Address [:street :city :state :zip])
 
-  (defaggregate Phone [:area-code :number]
+  (defembedded Phone [:area-code :number]
 
   (defentity Person
-    [:first-name 
+    [:first-name
      :last-name
      :address {:type Address}
      :phones {:type :list :of Phone}])
@@ -19,9 +18,9 @@ Example:
   karras.entity
   (:require [karras.collection :as c])
   (:use karras.sugar
-        [clojure.contrib.def :only [defnk defalias defvar]]
-        [clojure.contrib.str-utils2 :only [lower-case]]
-        inflections))
+        [karras.def :only [defvar]]
+        [clojure.string :only [lower-case]]
+        inflections.core))
 
 (defrecord EntitySpec
   [record-class
@@ -32,7 +31,7 @@ Example:
 (defonce entity-specs (atom {}))
 
 (defn entity-spec
-  "Lookup the DocSpec for a given type"
+  "Lookup the EntitySpec for a given type"
   [type]
   (get @entity-specs type))
 
@@ -44,7 +43,6 @@ Example:
 (defn entity-spec-get-in
   "Lookup the EntitySpec value for given key of the given type."
   [type path]
-  (prn path)
   (get-in (entity-spec type) path))
 
 (defn parse-fields [ks]
@@ -59,6 +57,10 @@ Example:
          (keyword? x)                (recur (cons y zs) (assoc results x {}))
          :else (throw (IllegalArgumentException. (str x " is not a keyword or a map"))))))))
 
+(defn- assoc-meta-cache [v]
+  (with-meta v (merge {:cache (atom nil)} (meta v))))
+
+(declare make)
 (defmulti convert
   "Multimethod used to convert a entity.
    Takes in a field-spec and a val and returns the conver
@@ -70,27 +72,41 @@ Example:
   [field-spec vals]
   (map #(convert (assoc field-spec :type (:of field-spec)) %) vals))
 
+(defmethod convert :reference
+  [field-spec val]
+  (assoc-meta-cache (make (:of field-spec) val :no-defaults)))
+
+(defmethod convert :references
+  [field-spec vals]
+  (assoc-meta-cache (map #(make (:of field-spec) % :no-defaults) vals)))
+
 (defmethod convert :default
   [_ val]
   val)
 
+(defn- convert-field [entity field-key field-spec]
+  (if (contains? entity field-key)
+    (assoc entity field-key (convert field-spec (field-key entity)))
+    entity))
+
+(defn- fill-defaults [entity field-key field-spec disable-defaults]
+  (if (and (not disable-defaults) (:default field-spec))
+    (assoc entity field-key (:default field-spec))
+    entity))
+
 (defn make
   "Converts a hashmap to the supplied type."
-  [#^Class type hmap]
-  (let [fields (-> type entity-spec :fields)
-        has-key? (fn [e k]
-                   (try (some #{k} (keys e))
-                        (catch Exception _ nil)))]
-    (reduce (fn [entity [k field-spec]]
-              (cond
-               (has-key? entity k)   (assoc entity k (convert field-spec (k hmap)))
-               (:default field-spec) (assoc entity k (:default field-spec))
-               :otherwise            entity))
-            (with-meta (merge (.newInstance type) hmap) (meta hmap))
-            fields)))
+  [#^Class type hmap & [no-defaults]]
+  (let [make-field (fn [entity [field-key field-spec]]
+                     (-> entity
+                         (convert-field field-key field-spec)
+                         (fill-defaults field-key field-spec no-defaults)))
+        initial (with-meta (merge (.newInstance type) hmap) (meta hmap))
+        fields  (-> type entity-spec :fields)]
+    (reduce make-field initial fields)))
 
 (defn- default-collection-name [classname]
-  (pluralize (lower-case (last (.split (str classname) "\\.")))))
+  (plural (lower-case (last (.split (str classname) "\\.")))))
 
 (defn- make-mongo-type [classname is-entity? fields type-fns]
   `(do
@@ -112,16 +128,22 @@ Example:
   [classname [& fields] & type-fns]
   (make-mongo-type classname true fields type-fns))
 
-(defmacro defaggregate
-  "Defines an aggregate type that can be embedded into an entity."
+(defmacro defembedded
+  "Defines a type that can be embedded into an entity."
   [classname [& fields] & type-fns]
   (make-mongo-type classname false fields type-fns))
 
+(defn get-type [entity-or-type]
+  (if (instance? Class entity-or-type)
+    entity-or-type
+    (class entity-or-type)))
+
 (defn field-spec-of
-  "Given a type and one or more keys,
-   returns the field spec for the last key."
-  [type & keys]
-  (let [field-type (or (reduce (fn [t k]
+  "Given a type or entity  and one or more keys,
+   returns the  field spec for the last key."
+  [entity-or-type & keys]
+  (let [type (get-type entity-or-type)
+        field-type (or (reduce (fn [t k]
                                  (-> t entity-spec :fields k :type))
                                type
                                (butlast keys))
@@ -158,10 +180,8 @@ Example:
 (defn collection-for
   "Returns the DBCollection for the supplied entity instance or type."
   [entity-or-type]
-  (let [type (if (instance? Class entity-or-type)
-               entity-or-type
-               (class entity-or-type))]
-    (c/collection (-> type entity-spec :collection-name))))
+  (let [type (get-type entity-or-type)]
+    (c/collection (entity-spec-get type :collection-name))))
 
 (defn ensure-type
   "Force an entity to be of a given type if is not already."
@@ -170,6 +190,12 @@ Example:
     entity
     (make type entity)))
 
+(defn by-id [entity]
+  (eq :_id (:_id entity)))
+
+(defn collect-ids [entities]
+  (map :_id entities))
+
 (defn save
   "Inserts or updates one or more entities."
   ([entity]
@@ -177,7 +203,8 @@ Example:
           (c/save (collection-for entity))
           (ensure-type (class entity))))
   ([entity & entities]
-     (doall (map save (cons entity entities)))))
+     (let [items (cons entity entities)]
+       (doall (map save items)))))
 
 (defn create
   "Makes a new instance of type and saves it."
@@ -185,7 +212,7 @@ Example:
   (save (make type hmap)))
 
 (defn update
-  "Updates one or more documents in a collection that match the criteria with the document 
+  "Updates one or more documents in a collection that match the criteria with the document
    provided.
      :upsert, performs an insert if the document doesn't have :_id
      :multi, update all documents that match the criteria
@@ -198,14 +225,7 @@ Example:
   ([type obj]
      (update-all type {} obj))
   ([type criteria obj]
-     (c/update-all (collection-for type) criteria obj)))
-
-(defn delete
-  "Deletes one or more entities."
-  ([entity]
-     (c/delete (collection-for entity) (where (eq :_id (:_id entity)))))
-  ([entity & entities]
-     (doall (map delete (cons entity entities)))))
+     (update type criteria obj :multi)))
 
 (defn delete-all
   "Deletes all entitys given an optional where clause."
@@ -214,41 +234,66 @@ Example:
   ([type where]
      (c/delete (collection-for type) where)))
 
+(defn delete
+  "Deletes one or more entities."
+  ([entity]
+     (delete-all entity (by-id entity)))
+  ([entity & entities]
+     (doall (map delete (cons entity entities)))))
+
 (defn fetch
   "Fetch a seq of entities for the given type matching the supplied parameters."
   [type criteria & options]
-  (map #(make type %) (apply c/fetch (collection-for type) criteria options)))
+  (let [collection (collection-for type)]
+    (map (partial make type)
+         (apply c/fetch collection criteria options))))
 
 (defn fetch-all
   "Fetch all of the entities for the given type."
   [type & options]
-  (map #(make type %) (apply c/fetch-all (collection-for type) options)))
+  (apply fetch type nil options))
 
 (defn fetch-one
   "Fetch the first entity for the given type matching the supplied criteria and options."
   [type criteria & options]
-  (when-let [document (apply c/fetch-one (collection-for type) criteria options)]
-    (make type document)))
+  (when-let [entity (first (apply fetch type criteria options))]
+    (make type entity)))
 
 (defn fetch-by-id
   "Fetch an enity by :_id"
   ([entity]
-     (fetch-by-id (class entity) (:_id entity)))
+     (fetch-by-id (class entity) (get entity :_id)))
   ([type id]
-   (when-let [document (c/fetch-by-id (collection-for type) id)]
-      (make type document))))
+     (if-let [entity (c/fetch-by-id (collection-for type) id)]
+       (make type entity))))
 
 (defn count-instances
   "Return the number of entities optionally matching a given where clause."
   ([type]
      (count-instances type nil))
   ([type criteria]
-     (c/fetch (collection-for type) criteria :count true)))
+     (c/count-docs (collection-for type) criteria)))
 
 (defn distinct-values
   "Return the distinct values of a given type for a given key."
   [type kw]
   (c/distinct-values (collection-for type) kw))
+
+(defn group
+  "Fetch a seq of grouped items.
+     Example:
+       SQL: select a,b,sum(c) csum from coll where active=1 group by a,b
+       Karras: (group MyType
+                      [:a :b]
+                      {:active 1}
+                      {:csum 0}
+                      \"function(obj,prev) { prev.csum += obj.c; }\")"
+  ([type keys]
+     (c/group (collection-for type) keys))
+  ([type keys cond initial reduce]
+     (group type keys cond initial reduce nil))
+  ([type keys cond initial reduce finalize]
+     (c/group (collection-for type) keys cond initial reduce finalize)))
 
 (defn find-and-modify
   "See http://www.mongodb.org/display/DOCS/findandmodify+Command"
@@ -287,50 +332,138 @@ Example:
        (ensure-indexes type)))
   ([type]
      (doseq [idx (entity-spec-get type :indexes)]
-       (c/ensure-index (collection-for type) idx))))
+       (c/ensure-index (collection-for type) idx)))
+  ([type options]
+     (doseq [idx (entity-spec-get type :indexes)]
+       (c/ensure-index (collection-for type) idx options))))
 
 (defn list-indexes
   ""
   [type]
   (c/list-indexes (collection-for type)))
 
+
+(defn entity-db-name [entity]
+  (c/collection-db-name (collection-for entity)))
+
+(defn entity-collection-name [entity]
+  (c/collection-name (collection-for entity)))
+
+(defn make-reference
+  ([type id]
+     (make-reference (make type {:_id id})))
+  ([entity]
+     {:_db (entity-db-name entity)
+      :_id (:_id entity)
+      :_ref (entity-collection-name entity)}))
+
 (defn add-reference
   "Add one more :_id's to a sequence of the given key"
   [entity k & vs]
-  (if-not (remove nil? (map :_id vs))
+  (if-not (remove nil? (collect-ids vs))
     (throw (IllegalArgumentException. "All references must have an :_id.")))
-  (assoc entity k (concat (or (k entity) []) (map :_id vs))))
+  (assoc entity k (assoc-meta-cache (concat (or (k entity) []) (map make-reference vs)))))
+
+(defn set-references
+  [entity k vs]
+  (apply add-reference (assoc entity k []) k vs))
 
 (defn set-reference
   "Set an :_id to the key of the given entity"
   [entity k v]
   (if-not (:_id v)
     (throw (IllegalArgumentException. "Reference must have an :_id.")))
-  (assoc entity k (:_id v)))
+  (assoc entity k (assoc-meta-cache (make-reference v))))
 
 (defn get-reference
   "Fetch the entity or entities referrenced by the given key."
   [entity k]
-  (let [field-spec (field-spec-of (class entity) k)
+  (let [field-spec (field-spec-of entity k)
         target-type (:of field-spec)
-        list? (= (:type field-spec) :references)]
+        list? (= (:type field-spec) :references)
+        reference (get entity k)]
     (if list?
-      (fetch target-type (where (in :_id (k entity))))
-      (fetch-one target-type (where (eq :_id (k entity)))))))
+      (map #(fetch-one target-type (by-id %)) reference)
+      (fetch-one target-type (by-id reference)))))
+
+(defn grab
+  "Analogous to clojure.core/get except that it will follow references.
+   References are cached in a :cache atom of the references metadata.
+   Takes an optional refresh flag to force it to fetch the reference."
+  [parent k & [refresh]]
+  (let [field-spec (field-spec-of parent k)
+        val (get parent k)]
+    (if (some #{(:type field-spec)} [:reference :references])
+      (if-let [cached (and (not refresh) (-> val meta :cache deref))]
+        cached
+        (let [result (get-reference parent k)]
+          (swap! (:cache (meta val)) (fn [_] result))
+          result))
+      val)))
+
+(defn grab-in
+  "Analogous to clojure.core/get-in except that it will follow references.
+   References are cached in a :cache atom of the references metadata.
+   Takes an optional refresh flag to force it to fetch any references
+   along the path."
+  [parent ks & refresh]
+  (reduce #(grab %1 %2 refresh) parent ks))
+
+(defn ensure-saved [type & entities]
+  (map #(if (:_id %)
+          %
+          (create type %))
+       entities))
+
+(defn relate
+  "Relates an entity to another entity as a reference. Returns the parent with
+   the reference associated.  No-op if the target field is not a :reference or
+   :references. If the the key is a list it will add the reference, otherwise it
+   will set the reference. References are automatically saved if they haven't
+   been already. References are stored on the entity as:
+     {:_db \"db-name\" :_id ObjectId :_ref \"collection-name\")}"
+  [parent k & vs]
+  (let [field-spec (field-spec-of (class parent) k)
+        related-type (:of field-spec)
+        saved-entities (ensure-saved related-type vs)]
+    (if (= :reference (:type field-spec))
+      (set-reference parent k (first saved-entities))
+      (if (= :references (:type field-spec))
+        (apply add-reference parent k saved-entities)
+        parent))))
+
+(defmacro create-with [type hmap & relations]
+  `(-> (make ~type ~hmap)
+       ~@relations
+       save))
+
+(defn fetch-refers-to
+  "Given an entity, a type and a field, fetch all the entities of the given type
+   that refer to the given entity. Takes the same options as fetch. "
+  [entity referrer-type referrer-field & options]
+  (let [field-spec (field-spec-of referrer-type referrer-field)
+        id (:_id entity)
+        criteria (if (= :reference (:type field-spec))
+                   (where
+                    (eq (str (name referrer-field) "._id") id))
+                   (where
+                    (element-match referrer-field (eq :_id id))))]
+    (apply fetch referrer-type criteria options)))
 
 (defn make-fetch
   [fetch-fn spec-key type fn-name args criteria]
   `(do
      (defn ~fn-name
        [~@args & options#]
-       (let [and-clauses# (:and (apply hash-map options#))]
+       (let [options# (apply hash-map options#)
+             and-clauses# (:and options#)]
          (apply ~fetch-fn  ~type
                 (where ~@criteria and-clauses#)
-                options#)))
+                (-> options# (dissoc :and) seq flatten))))
      (swap-entity-spec-in! ~type [~spec-key] assoc ~(keyword fn-name) ~fn-name)))
 
 (defmacro deffetch
-  "Defines a fetch function for the given type. 
+  "Defines a fetch function for the given type.
    The function created takes all of the options of fetch plus an :and option to append to the where clause.
 
    Usage:
@@ -344,13 +477,13 @@ Example:
    Give me all the teenagers with last names A-J sorted by last name:
      (teenagers :and (within :last-name \"A\" \"J\") :sort [(asc :last-name)])
 
-   Give me the youngest 10 people between the ages of 21 and 100 sorted by age and last name:      
+   Give me the youngest 10 people between the ages of 21 and 100 sorted by age and last name:
      (peope-in-age-range 21 100 :limit 10 :sort [(asc :age) (asc :last-name)])"
   [type fn-name [& args] & criteria]
   (make-fetch 'fetch :fetchs type fn-name args criteria))
 
 (defmacro deffetch-one
-  "Defines a fetch-one function for the given type. 
+  "Defines a fetch-one function for the given type.
    The function created takes all of the options of fetch-one plus an :and option to append to the where clause.
 
    Usage:

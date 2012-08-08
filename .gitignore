@@ -9,3 +9,5 @@ autodoc
 /karras-*.jar
 *.sw[op]
 tags
+.cake
+/.lein-deps-sum

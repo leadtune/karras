@@ -1,17 +1,17 @@
 ;; The MIT License
-;;  
+;;
 ;; Copyright (c) 2010 Wilkes Joiner
-;;  
+;;
 ;; Permission is hereby granted, free of charge, to any person obtaining a copy
 ;; of this software and associated documentation files (the "Software"), to deal
 ;; in the Software without restriction, including without limitation the rights
 ;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 ;; copies of the Software, and to permit persons to whom the Software is
 ;; furnished to do so, subject to the following conditions:
-;;  
+;;
 ;; The above copyright notice and this permission notice shall be included in
 ;; all copies or substantial portions of the Software.
-;;  
+;;
 ;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 ;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 ;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -21,7 +21,7 @@
 ;; THE SOFTWARE.
 
 (ns karras.sugar
-  (:use [clojure.contrib.def :only [defvar]])
+  (:use [karras.def :only [defvar]])
   (:import [java.util Calendar]))
 
 (defn compound-index
@@ -84,8 +84,28 @@
 (defn element-match "" [field match-query] {field {:$elemMatch match-query}})
 (defn is-type       "" [field type-number] {field {:$type type-number}})
 (defn negate        "" [where-expr]        {:$not where-expr})
-(defn is-nil?       "" [field]             (is-type field null-type)) 
+(defn is-nil?       "" [field]             (is-type field null-type))
+;; mongo 1.6
+(defn slice         "" [field val]         {field {:$slice val}})
+(defn ||          "or" [& clauses]         {:$or clauses})
+(defn add-to-set    "" [field value & values]
+  (if values
+    {:$addToSet {field {:$each (cons value values)}}}
+    {:$addToSet {field value}}))
 
+(def atomic {:$atomic true})
+
+(defn matched
+  "The $ operator (by itself) means 'position of the matched array item in the
+   query'. Use this to find an array member and then manipulate it."
+  [array-name & [field]]
+  (str (name array-name) ".$" (when field (str "." (name field)))))
+
+(defn sort-by-keys [keys maps]
+  (sort (fn [x y]
+          (first (remove #(= 0 %)
+                         (map #(compare (% x) (% y)) keys))))
+        maps))
 (defn modify
   "Sugar to create update documents
      (modify (incr :j) (push :k 3))
@@ -104,8 +124,8 @@
 (defn pull-all    "" [field values]   {:$pullAll {field values}})
 
 (defn date
-  "A convenience constructor for making a java.util.Date.  Takes zero or more 
-   args. Zero args return the current time. One or more args returns a date 
+  "A convenience constructor for making a java.util.Date.  Takes zero or more
+   args. Zero args return the current time. One or more args returns a date
    values provided and all other values zeroed out.
    Args are year, month, date, hour, minute, second, and  milliseconds"
   [& [year month date hour minute second milli]]
