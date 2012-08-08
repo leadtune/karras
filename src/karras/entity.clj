@@ -57,6 +57,30 @@ Example:
          (keyword? x)                (recur (cons y zs) (assoc results x {}))
          :else (throw (IllegalArgumentException. (str x " is not a keyword or a map"))))))))
 
+(defprotocol EntityCallbacks
+  "Lifecycle callbacks for Entities.
+   All of these are required to take in an entity and return an entity.
+
+  (before-create [e])
+  (before-delete [e])
+  (before-save [e])
+  (before-update [e])
+  (after-create [e])
+  (after-delete [e])
+  (after-save [e])
+  (after-update [e])"
+  (before-create [e])
+  (before-delete [e])
+  (before-save [e])
+  (before-update [e])
+  (after-create [e])
+  (after-delete [e])
+  (after-save [e])
+  (after-update [e]))
+
+(defonce default-callbacks
+  (reduce #(assoc %1 %2 identity) {} (-> EntityCallbacks :method-map keys)))
+
 (defn- assoc-meta-cache [v]
   (with-meta v (merge {:cache (atom nil)} (meta v))))
 
@@ -119,6 +143,7 @@ Example:
                       ~(if is-entity?
                          (default-collection-name classname)
                          nil)))
+     (extend ~classname EntityCallbacks default-callbacks)
      (defmethod convert ~classname [field-spec# val#]
                 (make (:type field-spec#) val#))
      ~@(map (fn [f] `(-> ~classname ~f)) type-fns)))
@@ -199,9 +224,16 @@ Example:
 (defn save
   "Inserts or updates one or more entities."
   ([entity]
-     (->> entity
-          (c/save (collection-for entity))
-          (ensure-type (class entity))))
+     (let [update?  (-> entity :_id nil? not)
+           before-cb (if update? before-update before-create)
+           after-cb (if update? after-update after-create)]
+       (->> entity
+            before-cb
+            before-save
+            (c/save (collection-for entity))
+            (ensure-type (class entity))
+            after-save
+            after-cb)))
   ([entity & entities]
      (let [items (cons entity entities)]
        (doall (map save items)))))
