@@ -257,7 +257,7 @@ Example:
   "Fetch the first entity for the given type matching the supplied criteria and options."
   [type criteria & options]
   (when-let [entity (first (apply fetch type criteria options))]
-    (make type entity)))
+    entity))
 
 (defn fetch-by-id
   "Fetch an enity by :_id"
