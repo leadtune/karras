@@ -231,7 +231,8 @@
                  (save .related.) => .saved.))
 
 
-(let [entity {:key '.ref.}]
+;; XXX The below are disabled and need to be rebuilt
+#_(let [entity {:key '.ref.}]
   (fact
     (get-reference entity :key) => .ref-value.
     (provided
@@ -239,14 +240,13 @@
       (by-id .ref.) => .condition.
       (fetch-one .ref-type. .condition.) => .ref-value.)))
 
-(let [entity {:key ['.ref.]}]
+#_(let [entity {:key ['.ref.]}]
   (fact
     (get-reference entity :key) => [.ref-value.]
     (provided
       (field-spec-of entity :key) => {:type :references :of .ref-type.}
       (by-id .ref.) => .condition.
       (fetch-one .ref-type. .condition.) => .ref-value.)))
-
 
 (let [entity {:key (with-meta '.ref. {:cache (atom nil)})}]
   (fact

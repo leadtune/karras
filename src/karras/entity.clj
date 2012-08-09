@@ -398,11 +398,10 @@ Example:
   [entity k]
   (let [field-spec (field-spec-of entity k)
         target-type (:of field-spec)
-        list? (= (:type field-spec) :references)
-        reference (get entity k)]
+        list? (= (:type field-spec) :references)]
     (if list?
-      (map #(fetch-one target-type (by-id %)) reference)
-      (fetch-one target-type (by-id reference)))))
+      (fetch target-type (where (in :_id (k entity))))
+      (fetch-one target-type (where (eq :_id (k entity)))))))
 
 (defn grab
   "Analogous to clojure.core/get except that it will follow references.
