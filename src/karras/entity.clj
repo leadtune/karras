@@ -84,7 +84,6 @@ Example:
 (defn- assoc-meta-cache [v]
   (with-meta v (merge {:cache (atom nil)} (meta v))))
 
-(declare make)
 (defmulti convert
   "Multimethod used to convert a entity.
    Takes in a field-spec and a val and returns the conver
@@ -96,38 +95,25 @@ Example:
   [field-spec vals]
   (map #(convert (assoc field-spec :type (:of field-spec)) %) vals))
 
-(defmethod convert :reference
-  [field-spec val]
-  (assoc-meta-cache (make (:of field-spec) val :no-defaults)))
-
-(defmethod convert :references
-  [field-spec vals]
-  (assoc-meta-cache (map #(make (:of field-spec) % :no-defaults) vals)))
-
 (defmethod convert :default
   [_ val]
   val)
 
-(defn- convert-field [entity field-key field-spec]
-  (if (contains? entity field-key)
-    (assoc entity field-key (convert field-spec (field-key entity)))
-    entity))
-
-(defn- fill-defaults [entity field-key field-spec disable-defaults]
-  (if (and (not disable-defaults) (:default field-spec))
-    (assoc entity field-key (:default field-spec))
-    entity))
-
 (defn make
   "Converts a hashmap to the supplied type."
-  [#^Class type hmap & [no-defaults]]
-  (let [make-field (fn [entity [field-key field-spec]]
-                     (-> entity
-                         (convert-field field-key field-spec)
-                         (fill-defaults field-key field-spec no-defaults)))
-        initial (with-meta (merge (.newInstance type) hmap) (meta hmap))
-        fields  (-> type entity-spec :fields)]
-    (reduce make-field initial fields)))
+  [#^Class type hmap]
+  (let [fields (-> type entity-spec :fields)
+        has-key? (fn [e k]
+                   (try (some #{k} (keys e))
+                        (catch Exception _ nil)))]
+    (reduce (fn [entity [k field-spec]]
+              (cond
+               (has-key? entity k)   (assoc entity k (convert field-spec (k hmap)))
+               (:default field-spec) (assoc entity k (:default field-spec))
+               :otherwise            entity))
+            (with-meta (merge (.newInstance type) hmap) (meta hmap))
+            fields)))
+
 
 (defn- default-collection-name [classname]
   (plural (lower-case (last (.split (str classname) "\\.")))))
