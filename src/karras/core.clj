@@ -21,7 +21,7 @@
 ;; THE SOFTWARE.
 
 (ns karras.core
-  (:import [com.mongodb Mongo DB BasicDBObject BasicDBObjectBuilder]
+  (:import [com.mongodb Mongo DB BasicDBObject BasicDBObjectBuilder ServerAddress]
            [java.util Map Map$Entry List]))
 
 (defn- keyword-str [kw]
@@ -104,9 +104,13 @@
      (in-request *mongo-db*  ~@body)))
 
 (defn connect
-  "Returns a single server connection. Defaults to host 127.0.0.1:27017"
+  "Returns a single server connection. Defaults to host 127.0.0.1:27017
+   Connects to a replica set if passed a vector of host-port vectors."
   ([] (connect "127.0.0.1"))
-  ([host] (connect host 27017))
+  ([host]
+     (cond
+       (string? host) (connect host 27017)
+       (coll? host) (Mongo. (map #(ServerAddress. (first %) (second %)) host))))
   ([#^String host port]
      (Mongo. host (int port))))
 
